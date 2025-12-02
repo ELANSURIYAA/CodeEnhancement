@@ -1,195 +1,182 @@
 ====================================================================
 Author: Ascendion AAVA
 Date: 
-Description: Enhanced PySpark ETL integrating BRANCH_OPERATIONAL_DETAILS into BRANCH_SUMMARY_REPORT with conditional population and audit-ready logic.
+Description: Enhanced PySpark ETL for BRANCH_SUMMARY_REPORT with integration of BRANCH_OPERATIONAL_DETAILS and conditional population of REGION and LAST_AUDIT_DATE.
 ====================================================================
 
 import logging
 from pyspark.sql import SparkSession, DataFrame
 from pyspark.sql.functions import col, count, sum, when
+from pyspark.sql.types import StructType, StructField, IntegerType, StringType, DoubleType, DateType
 
-# [ADDED] Configure logging for audit and traceability
+# Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# [MODIFIED] Use Spark Connect compatible session
+# [MODIFIED] Use getActiveSession for Spark Connect compatibility
 
 def get_spark_session(app_name: str = "RegulatoryReportingETL") -> SparkSession:
     """
-    Initializes and returns a Spark session compatible with Spark Connect.
+    Initializes and returns a Spark session.
     """
     try:
-        # [MODIFIED] Use getActiveSession for Databricks compatibility
         spark = SparkSession.getActiveSession()
         if spark is None:
-            spark = SparkSession.builder.appName(app_name).getOrCreate()
+            spark = SparkSession.builder \
+                .appName(app_name) \
+                .getOrCreate()
         logger.info("Spark session created successfully.")
         return spark
     except Exception as e:
         logger.error(f"Error creating Spark session: {e}")
         raise
 
-# [ADDED] Simulated Delta Table Reader
-
-def read_delta_table(spark: SparkSession, table_name: str) -> DataFrame:
-    """
-    Reads a Delta table into a DataFrame. (Simulated for sample data)
-    """
-    logger.info(f"Reading Delta table: {table_name}")
-    # [ADDED] For self-contained sample, return empty DataFrame
-    return spark.createDataFrame([], schema=None)
-
-# [ADDED] Sample Data Creation Functions
-
-def create_sample_dataframes(spark: SparkSession):
+# [ADDED] Sample data creation functions (self-contained, no external JDBC)
+def create_sample_data(spark: SparkSession):
     """
     Creates sample DataFrames for CUSTOMER, ACCOUNT, TRANSACTION, BRANCH, BRANCH_OPERATIONAL_DETAILS.
     """
-    from pyspark.sql.types import StructType, StructField, IntegerType, StringType, DecimalType, DateType
-    import datetime
-    # CUSTOMER
     customer_schema = StructType([
         StructField("CUSTOMER_ID", IntegerType()),
         StructField("NAME", StringType()),
         StructField("EMAIL", StringType()),
         StructField("PHONE", StringType()),
         StructField("ADDRESS", StringType()),
-        StructField("CREATED_DATE", DateType())
+        StructField("CREATED_DATE", StringType()),
     ])
     customer_data = [
-        (1, "Alice", "alice@example.com", "1234567890", "123 Main St", datetime.date(2023,1,1)),
-        (2, "Bob", "bob@example.com", "0987654321", "456 Elm St", datetime.date(2023,2,1))
+        (1, "John Doe", "john@example.com", "1234567890", "123 Main St", "2023-01-01"),
+        (2, "Jane Smith", "jane@example.com", "0987654321", "456 Elm St", "2023-02-01"),
     ]
     customer_df = spark.createDataFrame(customer_data, schema=customer_schema)
 
-    # ACCOUNT
     account_schema = StructType([
         StructField("ACCOUNT_ID", IntegerType()),
         StructField("CUSTOMER_ID", IntegerType()),
         StructField("BRANCH_ID", IntegerType()),
         StructField("ACCOUNT_NUMBER", StringType()),
         StructField("ACCOUNT_TYPE", StringType()),
-        StructField("BALANCE", DecimalType(15,2)),
-        StructField("OPENED_DATE", DateType())
+        StructField("BALANCE", DoubleType()),
+        StructField("OPENED_DATE", StringType()),
     ])
     account_data = [
-        (100, 1, 10, "A100", "SAVINGS", 1000.00, datetime.date(2023,1,5)),
-        (101, 2, 11, "A101", "CHECKING", 2000.00, datetime.date(2023,2,5))
+        (101, 1, 10, "ACC123", "SAVINGS", 5000.0, "2023-01-10"),
+        (102, 2, 20, "ACC456", "CURRENT", 7500.0, "2023-02-10"),
     ]
     account_df = spark.createDataFrame(account_data, schema=account_schema)
 
-    # TRANSACTION
     transaction_schema = StructType([
         StructField("TRANSACTION_ID", IntegerType()),
         StructField("ACCOUNT_ID", IntegerType()),
         StructField("TRANSACTION_TYPE", StringType()),
-        StructField("AMOUNT", DecimalType(15,2)),
-        StructField("TRANSACTION_DATE", DateType()),
-        StructField("DESCRIPTION", StringType())
+        StructField("AMOUNT", DoubleType()),
+        StructField("TRANSACTION_DATE", StringType()),
+        StructField("DESCRIPTION", StringType()),
     ])
     transaction_data = [
-        (1000, 100, "DEPOSIT", 500.00, datetime.date(2023,1,10), "Salary"),
-        (1001, 101, "WITHDRAWAL", 300.00, datetime.date(2023,2,10), "Bill Payment")
+        (1001, 101, "DEPOSIT", 1000.0, "2023-01-15", "Initial deposit"),
+        (1002, 102, "WITHDRAWAL", 500.0, "2023-02-15", "ATM withdrawal"),
+        (1003, 101, "DEPOSIT", 2000.0, "2023-03-01", "Salary"),
     ]
     transaction_df = spark.createDataFrame(transaction_data, schema=transaction_schema)
 
-    # BRANCH
     branch_schema = StructType([
         StructField("BRANCH_ID", IntegerType()),
         StructField("BRANCH_NAME", StringType()),
         StructField("BRANCH_CODE", StringType()),
         StructField("CITY", StringType()),
         StructField("STATE", StringType()),
-        StructField("COUNTRY", StringType())
+        StructField("COUNTRY", StringType()),
     ])
     branch_data = [
-        (10, "Central", "CEN", "Metropolis", "State1", "CountryA"),
-        (11, "West", "WST", "Coast City", "State2", "CountryB")
+        (10, "Central Branch", "CB001", "Metropolis", "StateA", "CountryX"),
+        (20, "East Branch", "EB002", "Gotham", "StateB", "CountryY"),
     ]
     branch_df = spark.createDataFrame(branch_data, schema=branch_schema)
 
-    # [ADDED] BRANCH_OPERATIONAL_DETAILS
-    branch_operational_schema = StructType([
+    branch_op_schema = StructType([
         StructField("BRANCH_ID", IntegerType()),
         StructField("REGION", StringType()),
         StructField("MANAGER_NAME", StringType()),
         StructField("LAST_AUDIT_DATE", StringType()),
-        StructField("IS_ACTIVE", StringType())
+        StructField("IS_ACTIVE", StringType()),
     ])
-    branch_operational_data = [
-        (10, "North", "John Doe", "2023-03-01", "Y"),
-        (11, "South", "Jane Smith", "2023-03-15", "N")
+    branch_op_data = [
+        (10, "North", "Alice", "2023-04-01", "Y"),
+        (20, "South", "Bob", "2023-03-15", "N"),
     ]
-    branch_operational_df = spark.createDataFrame(branch_operational_data, schema=branch_operational_schema)
+    branch_op_df = spark.createDataFrame(branch_op_data, schema=branch_op_schema)
 
-    return customer_df, account_df, transaction_df, branch_df, branch_operational_df
+    return customer_df, account_df, transaction_df, branch_df, branch_op_df
 
-# [MODIFIED] Enhanced Branch Summary Report Logic
-
-def create_branch_summary_report(transaction_df: DataFrame, account_df: DataFrame, branch_df: DataFrame, branch_operational_df: DataFrame) -> DataFrame:
+# [MODIFIED] Enhanced branch summary to join with BRANCH_OPERATIONAL_DETAILS and conditionally populate REGION and LAST_AUDIT_DATE
+def create_branch_summary_report(transaction_df: DataFrame, account_df: DataFrame, branch_df: DataFrame, branch_op_df: DataFrame) -> DataFrame:
     """
     Creates the BRANCH_SUMMARY_REPORT DataFrame by aggregating transaction data at the branch level and integrating operational details.
     """
-    logger.info("Creating Branch Summary Report DataFrame with operational details integration.")
-    summary_df = transaction_df.join(account_df, "ACCOUNT_ID") \
+    logger.info("Creating Branch Summary Report DataFrame with operational details.")
+    branch_summary_df = transaction_df.join(account_df, "ACCOUNT_ID") \
         .join(branch_df, "BRANCH_ID") \
         .groupBy("BRANCH_ID", "BRANCH_NAME") \
         .agg(
             count("*").alias("TOTAL_TRANSACTIONS"),
             sum("AMOUNT").alias("TOTAL_AMOUNT")
         )
-    # [ADDED] Integrate BRANCH_OPERATIONAL_DETAILS
-    summary_df = summary_df.join(branch_operational_df, "BRANCH_ID", "left")
-    summary_df = summary_df.withColumn(
+    # [ADDED] Join with operational details and conditionally populate REGION and LAST_AUDIT_DATE
+    branch_summary_df = branch_summary_df.join(branch_op_df, "BRANCH_ID", "left")
+    branch_summary_df = branch_summary_df.withColumn(
         "REGION", when(col("IS_ACTIVE") == "Y", col("REGION")).otherwise(None)
     ).withColumn(
         "LAST_AUDIT_DATE", when(col("IS_ACTIVE") == "Y", col("LAST_AUDIT_DATE")).otherwise(None)
     )
-    # [MODIFIED] Select required columns for target Delta table
-    summary_df = summary_df.select(
+    # [DEPRECATED] Original logic without operational details
+    # branch_summary_df = transaction_df.join(account_df, "ACCOUNT_ID") \
+    #     .join(branch_df, "BRANCH_ID") \
+    #     .groupBy("BRANCH_ID", "BRANCH_NAME") \
+    #     .agg(
+    #         count("*").alias("TOTAL_TRANSACTIONS"),
+    #         sum("AMOUNT").alias("TOTAL_AMOUNT")
+    #     )
+    return branch_summary_df.select(
         "BRANCH_ID", "BRANCH_NAME", "TOTAL_TRANSACTIONS", "TOTAL_AMOUNT", "REGION", "LAST_AUDIT_DATE"
     )
-    return summary_df
 
-# [MODIFIED] Deprecated logic commented out for audit
-# def create_branch_summary_report(transaction_df: DataFrame, account_df: DataFrame, branch_df: DataFrame) -> DataFrame:
-#     """
-#     [DEPRECATED] Old logic: Did not integrate operational details
-#     """
-#     logger.info("[DEPRECATED] Creating Branch Summary Report DataFrame without operational details.")
-#     return transaction_df.join(account_df, "ACCOUNT_ID") \
-#         .join(branch_df, "BRANCH_ID") \
-#         .groupBy("BRANCH_ID", "BRANCH_NAME") \
-#         .agg(
-#             count("*").alias("TOTAL_TRANSACTIONS"),
-#             sum("AMOUNT").alias("TOTAL_AMOUNT")
-#         )
-
-# [ADDED] Delta Table Writer (simulated for sample data)
-
+# [ADDED] Write to Delta table simulation (show output instead of writing to Delta)
 def write_to_delta_table(df: DataFrame, table_name: str):
     """
-    Simulates writing a DataFrame to a Delta table (prints schema and sample rows).
+    Simulates writing a DataFrame to a Delta table by showing the output.
     """
-    logger.info(f"Writing DataFrame to Delta table: {table_name}")
+    logger.info(f"Simulated write to Delta table: {table_name}")
     df.show(truncate=False)
-    logger.info(f"Successfully written data to {table_name}")
 
-# [MODIFIED] Main ETL execution function
-
+# [MODIFIED] Main ETL execution function using sample data and enhanced logic
 def main():
     """
-    Main ETL execution function for Regulatory Reporting.
+    Main ETL execution function.
     """
     spark = None
     try:
         spark = get_spark_session()
-        # [ADDED] Use sample data for self-contained pipeline
-        customer_df, account_df, transaction_df, branch_df, branch_operational_df = create_sample_dataframes(spark)
-        # [MODIFIED] Create Branch Summary Report with operational details
-        branch_summary_df = create_branch_summary_report(transaction_df, account_df, branch_df, branch_operational_df)
-        # [ADDED] Simulate writing to Delta table
-        write_to_delta_table(branch_summary_df, "workspace.default.branch_summary_report")
+        customer_df, account_df, transaction_df, branch_df, branch_op_df = create_sample_data(spark)
+
+        # Create and write AML_CUSTOMER_TRANSACTIONS (unchanged)
+        aml_transactions_df = customer_df.join(account_df, "CUSTOMER_ID") \
+            .join(transaction_df, "ACCOUNT_ID") \
+            .select(
+                col("CUSTOMER_ID"),
+                col("NAME"),
+                col("ACCOUNT_ID"),
+                col("TRANSACTION_ID"),
+                col("AMOUNT"),
+                col("TRANSACTION_TYPE"),
+                col("TRANSACTION_DATE")
+            )
+        write_to_delta_table(aml_transactions_df, "AML_CUSTOMER_TRANSACTIONS")
+
+        # Create and write BRANCH_SUMMARY_REPORT with operational details
+        branch_summary_df = create_branch_summary_report(transaction_df, account_df, branch_df, branch_op_df)
+        write_to_delta_table(branch_summary_df, "BRANCH_SUMMARY_REPORT")
+
         logger.info("ETL job completed successfully.")
     except Exception as e:
         logger.error(f"ETL job failed with exception: {e}")
@@ -201,10 +188,10 @@ def main():
 if __name__ == "__main__":
     main()
 
-# ====================================================================
-# Summary of Updation in this Version
-# - Integrated BRANCH_OPERATIONAL_DETAILS into BRANCH_SUMMARY_REPORT ETL logic
-# - Added conditional population of REGION and LAST_AUDIT_DATE based on IS_ACTIVE
-# - Deprecated old summary report logic (commented out for audit)
-# - Enhanced documentation and inline comments for traceability
-# ====================================================================
+# [SUMMARY OF UPDATION]
+# - Integrated BRANCH_OPERATIONAL_DETAILS into BRANCH_SUMMARY_REPORT logic
+# - Added conditional population for REGION and LAST_AUDIT_DATE based on IS_ACTIVE
+# - Deprecated original branch summary logic (commented out)
+# - All changes annotated with [ADDED], [MODIFIED], [DEPRECATED]
+# - Sample data generation for self-contained execution
+# - Delta write simulated by .show()
