@@ -1,9 +1,13 @@
 ====================================================================
 Author: Ascendion AAVA
 Date: <Leave it blank>
-Description: Python test script for Enhanced PySpark ETL pipeline testing (without PyTest framework)
+Description: Python-based test script for Enhanced PySpark ETL pipeline (without PyTest framework)
 ====================================================================
 
 import sys
-import logging
+import os
+import tempfile
+import shutil
+from datetime import date
 from pyspark.sql import SparkSession
+from pyspark.sql.functions import col
