@@ -1,28 +1,35 @@
 ==================================================
 Author: Ascendion AAVA
 Date: 
-Description: PySpark code review could not be completed due to missing updated file.
+Description: Code review report for PySpark ETL pipeline - unable to compare updated code due to missing file.
 ==================================================
 
-**Summary of changes**
-- The updated file `DI_PySpark_Code_Update/RegulatoryReportingETL_Pipeline.py` could not be found in the repository (HTTP 404 error).
-- No code comparison or review could be performed.
+## Summary of changes
 
-**Categorization_Changes:**
-- Structural: N/A
-- Semantic: N/A
-- Quality: N/A
-- Severity: Critical (blocking)
+**Deviation Detected:**
+- File: DI_PySpark_Code_Update/RegulatoryReportingETL_Pipeline.py
+- Type: Missing file
+- Severity: Critical
+- Description: The updated PySpark code file intended for review is missing from the repository (404 Not Found). As a result, no structural or semantic comparison can be performed.
 
-**Additional Optimization Suggestions**
-- Please ensure the updated file is pushed to the correct path in the repository and is accessible on the 'main' branch.
-- Once the file is available, re-run the automated review for full code comparison and quality analysis.
+### Categorization_Changes
+- Structural: N/A (comparison not possible)
+- Semantic: N/A (comparison not possible)
+- Quality: N/A (comparison not possible)
+- Severity: Critical (missing artifact blocks review)
 
-||||||Cost Estimation and Justification
+### Additional Optimization Suggestions
+- Ensure all required files are committed and available in the repository before initiating automated code reviews.
+- Implement CI checks to verify existence of update/target files for review steps.
+- Consider versioning or tagging updated files to avoid path or naming errors.
+
+||||||
+
+## Cost Estimation and Justification
 (Calculation steps remain unchanged)
 
-**Engineering Effort:**
-- Code review blocked: 0.5h (triage, reporting, guidance)
-
-**Justification:**
-Automated review cannot proceed without both source and target files. Immediate feedback minimizes wasted effort and enables rapid correction.
+- Development: 0.5 hours (attempted analysis, error handling)
+- Review & QA: 0.5 hours
+- Total Effort: 1 hour
+- Justification: Review was blocked due to missing file; minimal time spent on error trace and reporting.
+==================================================
