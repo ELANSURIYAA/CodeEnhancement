@@ -4,50 +4,27 @@ Date:
 Description: Technical specification for integrating BRANCH_OPERATIONAL_DETAILS into BRANCH_SUMMARY_REPORT ETL pipeline
 =============================================
 
-# Technical Specification for BRANCH_SUMMARY_REPORT Enhancement
+# Technical Specification for BRANCH_OPERATIONAL_DETAILS Integration Enhancement
 
 ## Introduction
 
-### Purpose
-This technical specification outlines the required changes to integrate the new Oracle source table `BRANCH_OPERATIONAL_DETAILS` into the existing ETL pipeline that generates the `BRANCH_SUMMARY_REPORT` in Databricks Delta format.
+### Project Overview
+This technical specification outlines the enhancement required to integrate the new Oracle source table `BRANCH_OPERATIONAL_DETAILS` into the existing ETL pipeline for regulatory reporting. The enhancement will extend the `BRANCH_SUMMARY_REPORT` logic to include branch-level operational metadata for improved compliance and audit readiness.
 
 ### Business Context
-As part of regulatory reporting enhancements, branch-level operational metadata (region, manager name, audit date, active status) needs to be incorporated into the core reporting layer to ensure audit trails and compliance checks include contextual metadata.
+As per JIRA stories PCE-1 and PCE-2, the business requirement is to improve compliance and audit readiness by incorporating branch operational metadata (region, manager name, audit date, active status) into the core reporting layer. This ensures that audit trails and compliance checks include contextual metadata.
 
 ### Scope
-- Integration of `BRANCH_OPERATIONAL_DETAILS` table into existing PySpark ETL pipeline
-- Schema updates to `BRANCH_SUMMARY_REPORT` target table
-- Conditional data population based on active status
-- Maintenance of backward compatibility
+- Integration of `BRANCH_OPERATIONAL_DETAILS` table into existing ETL pipeline
+- Enhancement of `BRANCH_SUMMARY_REPORT` with new columns: `REGION` and `LAST_AUDIT_DATE`
+- Modification of PySpark ETL logic to handle the new data source
+- Maintenance of backward compatibility with existing records
 
 ## Code Changes
 
-### 1. Enhanced Table Reading Function
+### 1. Enhanced ETL Function - create_branch_summary_report
 
-**File:** `RegulatoryReportingETL.py`
-
-**Current Implementation:**
-```python
-# Read source tables
-customer_df = read_table(spark, jdbc_url, "CUSTOMER", connection_properties)
-account_df = read_table(spark, jdbc_url, "ACCOUNT", connection_properties)
-transaction_df = read_table(spark, jdbc_url, "TRANSACTION", connection_properties)
-branch_df = read_table(spark, jdbc_url, "BRANCH", connection_properties)
-```
-
-**Enhanced Implementation:**
-```python
-# Read source tables
-customer_df = read_table(spark, jdbc_url, "CUSTOMER", connection_properties)
-account_df = read_table(spark, jdbc_url, "ACCOUNT", connection_properties)
-transaction_df = read_table(spark, jdbc_url, "TRANSACTION", connection_properties)
-branch_df = read_table(spark, jdbc_url, "BRANCH", connection_properties)
-branch_operational_df = read_table(spark, jdbc_url, "BRANCH_OPERATIONAL_DETAILS", connection_properties)
-```
-
-### 2. Updated Branch Summary Report Function
-
-**Current Function:**
+#### Current Implementation
 ```python
 def create_branch_summary_report(transaction_df: DataFrame, account_df: DataFrame, branch_df: DataFrame) -> DataFrame:
     logger.info("Creating Branch Summary Report DataFrame.")
@@ -60,13 +37,13 @@ def create_branch_summary_report(transaction_df: DataFrame, account_df: DataFram
                          )
 ```
 
-**Enhanced Function:**
+#### Enhanced Implementation
 ```python
 def create_branch_summary_report(transaction_df: DataFrame, account_df: DataFrame, 
-                                branch_df: DataFrame, branch_operational_df: DataFrame) -> DataFrame:
+                               branch_df: DataFrame, branch_operational_df: DataFrame) -> DataFrame:
     """
     Creates the BRANCH_SUMMARY_REPORT DataFrame by aggregating transaction data at the branch level
-    and incorporating operational details.
+    and incorporating operational metadata from BRANCH_OPERATIONAL_DETAILS.
 
     :param transaction_df: DataFrame with transaction data.
     :param account_df: DataFrame with account data.
@@ -74,44 +51,47 @@ def create_branch_summary_report(transaction_df: DataFrame, account_df: DataFram
     :param branch_operational_df: DataFrame with branch operational details.
     :return: A DataFrame containing the enhanced branch summary report.
     """
-    logger.info("Creating Enhanced Branch Summary Report DataFrame.")
+    logger.info("Creating Enhanced Branch Summary Report DataFrame with operational details.")
     
     # Filter active branches only
     active_branch_operational_df = branch_operational_df.filter(col("IS_ACTIVE") == "Y")
     
     # Create base aggregation
     base_summary = transaction_df.join(account_df, "ACCOUNT_ID") \
-                                 .join(branch_df, "BRANCH_ID") \
-                                 .groupBy("BRANCH_ID", "BRANCH_NAME") \
-                                 .agg(
-                                     count("*").alias("TOTAL_TRANSACTIONS"),
-                                     sum("AMOUNT").alias("TOTAL_AMOUNT")
-                                 )
+                                .join(branch_df, "BRANCH_ID") \
+                                .groupBy("BRANCH_ID", "BRANCH_NAME") \
+                                .agg(
+                                    count("*").alias("TOTAL_TRANSACTIONS"),
+                                    sum("AMOUNT").alias("TOTAL_AMOUNT")
+                                )
     
-    # Join with operational details (left join to maintain all branches)
+    # Left join with operational details to maintain all branches
     enhanced_summary = base_summary.join(
-        active_branch_operational_df.select(
-            "BRANCH_ID", 
-            "REGION", 
-            "LAST_AUDIT_DATE"
-        ), 
-        "BRANCH_ID", 
+        active_branch_operational_df.select("BRANCH_ID", "REGION", "LAST_AUDIT_DATE"),
+        "BRANCH_ID",
         "left"
+    ).select(
+        col("BRANCH_ID"),
+        col("BRANCH_NAME"),
+        col("TOTAL_TRANSACTIONS"),
+        col("TOTAL_AMOUNT"),
+        col("REGION"),
+        col("LAST_AUDIT_DATE").cast("string").alias("LAST_AUDIT_DATE")
     )
     
     return enhanced_summary
 ```
 
-### 3. Updated Main Function
+### 2. Main Function Enhancement
 
-**Enhanced Main Function:**
+#### Additional Code Changes Required
 ```python
 def main():
     spark = None
     try:
         spark = get_spark_session()
 
-        # JDBC connection properties
+        # JDBC connection properties (existing)
         jdbc_url = "jdbc:oracle:thin:@your_oracle_host:1521:orcl"
         connection_properties = {
             "user": "your_user",
@@ -119,18 +99,20 @@ def main():
             "driver": "oracle.jdbc.driver.OracleDriver"
         }
 
-        # Read source tables
+        # Read source tables (existing + new)
         customer_df = read_table(spark, jdbc_url, "CUSTOMER", connection_properties)
         account_df = read_table(spark, jdbc_url, "ACCOUNT", connection_properties)
         transaction_df = read_table(spark, jdbc_url, "TRANSACTION", connection_properties)
         branch_df = read_table(spark, jdbc_url, "BRANCH", connection_properties)
+        
+        # NEW: Read branch operational details
         branch_operational_df = read_table(spark, jdbc_url, "BRANCH_OPERATIONAL_DETAILS", connection_properties)
 
-        # Create and write AML_CUSTOMER_TRANSACTIONS
+        # Create and write AML_CUSTOMER_TRANSACTIONS (unchanged)
         aml_transactions_df = create_aml_customer_transactions(customer_df, account_df, transaction_df)
         write_to_delta_table(aml_transactions_df, "AML_CUSTOMER_TRANSACTIONS")
 
-        # Create and write enhanced BRANCH_SUMMARY_REPORT
+        # ENHANCED: Create and write BRANCH_SUMMARY_REPORT with operational details
         branch_summary_df = create_branch_summary_report(transaction_df, account_df, branch_df, branch_operational_df)
         write_to_delta_table(branch_summary_df, "BRANCH_SUMMARY_REPORT")
 
@@ -144,6 +126,9 @@ def main():
             logger.info("Spark session stopped.")
 ```
 
+### 3. Import Statements Enhancement
+No additional imports required as the existing PySpark functions are sufficient for the enhancement.
+
 ## Data Model Updates
 
 ### Source Data Model Changes
@@ -151,12 +136,11 @@ def main():
 #### New Source Table: BRANCH_OPERATIONAL_DETAILS
 ```sql
 CREATE TABLE BRANCH_OPERATIONAL_DETAILS (
-    BRANCH_ID INT,
-    REGION VARCHAR2(50),
+    BRANCH_ID INT PRIMARY KEY,
+    REGION VARCHAR2(50) NOT NULL,
     MANAGER_NAME VARCHAR2(100),
     LAST_AUDIT_DATE DATE,
-    IS_ACTIVE CHAR(1),
-    PRIMARY KEY (BRANCH_ID)
+    IS_ACTIVE CHAR(1) DEFAULT 'Y'
 );
 ```
 
@@ -167,27 +151,15 @@ CREATE TABLE BRANCH_OPERATIONAL_DETAILS (
 
 ### Target Data Model Changes
 
-#### Updated Target Table: BRANCH_SUMMARY_REPORT
-
-**Current Schema:**
-```sql
-CREATE TABLE workspace.default.branch_summary_report (
-    BRANCH_ID BIGINT,
-    BRANCH_NAME STRING,
-    TOTAL_TRANSACTIONS BIGINT,
-    TOTAL_AMOUNT DOUBLE
-)
-```
-
-**Enhanced Schema:**
+#### Enhanced BRANCH_SUMMARY_REPORT Schema
 ```sql
 CREATE TABLE workspace.default.branch_summary_report (
     BRANCH_ID BIGINT,
     BRANCH_NAME STRING,
     TOTAL_TRANSACTIONS BIGINT,
     TOTAL_AMOUNT DOUBLE,
-    REGION STRING,
-    LAST_AUDIT_DATE STRING
+    REGION STRING,              -- NEW COLUMN
+    LAST_AUDIT_DATE STRING      -- NEW COLUMN
 )
 USING delta
 TBLPROPERTIES (
@@ -201,9 +173,10 @@ TBLPROPERTIES (
 );
 ```
 
-**New Columns Added:**
-- `REGION STRING`: Branch operational region
-- `LAST_AUDIT_DATE STRING`: Last audit date for compliance tracking
+**Schema Evolution:**
+- Added `REGION` column (STRING, nullable)
+- Added `LAST_AUDIT_DATE` column (STRING, nullable)
+- Maintains backward compatibility with existing records
 
 ## Source-to-Target Mapping
 
@@ -215,65 +188,65 @@ TBLPROPERTIES (
 | TRANSACTION | AMOUNT | BRANCH_SUMMARY_REPORT | TOTAL_AMOUNT | SUM(AMOUNT) aggregation | DOUBLE | No |
 | BRANCH | BRANCH_ID | BRANCH_SUMMARY_REPORT | BRANCH_ID | Direct mapping | BIGINT | No |
 | BRANCH | BRANCH_NAME | BRANCH_SUMMARY_REPORT | BRANCH_NAME | Direct mapping | STRING | No |
-| BRANCH_OPERATIONAL_DETAILS | REGION | BRANCH_SUMMARY_REPORT | REGION | Direct mapping with IS_ACTIVE='Y' filter | STRING | Yes |
-| BRANCH_OPERATIONAL_DETAILS | LAST_AUDIT_DATE | BRANCH_SUMMARY_REPORT | LAST_AUDIT_DATE | Direct mapping with IS_ACTIVE='Y' filter, DATE to STRING conversion | STRING | Yes |
+| BRANCH_OPERATIONAL_DETAILS | REGION | BRANCH_SUMMARY_REPORT | REGION | Direct mapping (filtered by IS_ACTIVE='Y') | STRING | Yes |
+| BRANCH_OPERATIONAL_DETAILS | LAST_AUDIT_DATE | BRANCH_SUMMARY_REPORT | LAST_AUDIT_DATE | Cast to STRING (filtered by IS_ACTIVE='Y') | STRING | Yes |
 
 ### Transformation Rules
 
 #### 1. Active Branch Filter
-```sql
-WHERE BRANCH_OPERATIONAL_DETAILS.IS_ACTIVE = 'Y'
+```python
+# Filter condition for operational details
+active_branch_operational_df = branch_operational_df.filter(col("IS_ACTIVE") == "Y")
 ```
 
-#### 2. Left Join Logic
+#### 2. Date Type Conversion
 ```python
-# Left join to maintain all branches, even those without operational details
+# Convert DATE to STRING for target compatibility
+col("LAST_AUDIT_DATE").cast("string").alias("LAST_AUDIT_DATE")
+```
+
+#### 3. Left Join Strategy
+```python
+# Maintain all branches, even those without operational details
 enhanced_summary = base_summary.join(
-    active_branch_operational_df.select("BRANCH_ID", "REGION", "LAST_AUDIT_DATE"), 
-    "BRANCH_ID", 
-    "left"
+    active_branch_operational_df.select("BRANCH_ID", "REGION", "LAST_AUDIT_DATE"),
+    "BRANCH_ID",
+    "left"  # Left join to preserve all branches
 )
 ```
 
-#### 3. Data Type Conversions
-- `LAST_AUDIT_DATE`: Oracle DATE → Databricks STRING
-- `REGION`: Oracle VARCHAR2(50) → Databricks STRING
-
-### Join Strategy
-
+### Data Flow Diagram
 ```
-TRANSACTION
-    ↓ (INNER JOIN on ACCOUNT_ID)
-ACCOUNT
-    ↓ (INNER JOIN on BRANCH_ID)
-BRANCH
-    ↓ (LEFT JOIN on BRANCH_ID)
-BRANCH_OPERATIONAL_DETAILS (WHERE IS_ACTIVE = 'Y')
-    ↓
-BRANCH_SUMMARY_REPORT
+TRANSACTION ──┐
+              ├── JOIN (ACCOUNT_ID) ──┐
+ACCOUNT ──────┘                      ├── GROUP BY (BRANCH_ID, BRANCH_NAME)
+                                     │
+BRANCH ───────────────────────────────┤
+                                     │
+BRANCH_OPERATIONAL_DETAILS ──────────┴── LEFT JOIN (BRANCH_ID) ──> BRANCH_SUMMARY_REPORT
+(filtered: IS_ACTIVE='Y')
 ```
 
 ## Assumptions and Constraints
 
 ### Assumptions
-1. **Data Availability**: `BRANCH_OPERATIONAL_DETAILS` table is available in the Oracle source system
-2. **Network Connectivity**: Existing JDBC connectivity can access the new table
-3. **Data Quality**: `BRANCH_ID` in `BRANCH_OPERATIONAL_DETAILS` matches existing `BRANCH_ID` values
-4. **Active Status**: Only branches with `IS_ACTIVE = 'Y'` should contribute operational metadata
-5. **Backward Compatibility**: Existing records without operational details should remain accessible
+1. **Data Quality**: `BRANCH_OPERATIONAL_DETAILS.BRANCH_ID` exists in the `BRANCH` table
+2. **Active Status**: Only branches with `IS_ACTIVE = 'Y'` should contribute operational metadata
+3. **Backward Compatibility**: Existing branches without operational details should still appear in the report with NULL values for new columns
+4. **Data Refresh**: Full reload of `BRANCH_SUMMARY_REPORT` is acceptable for this enhancement
+5. **Oracle Connectivity**: Existing JDBC connection can access the new `BRANCH_OPERATIONAL_DETAILS` table
 
 ### Constraints
-1. **Performance Impact**: Additional join operation may impact ETL performance
-2. **Schema Evolution**: Target table schema change requires full reload
-3. **Data Governance**: New columns must comply with existing data governance policies
-4. **Testing Requirements**: Comprehensive testing required for data integrity
-5. **Deployment Coordination**: Requires coordinated deployment of source table and ETL changes
+1. **Performance**: Left join strategy may impact performance for large datasets
+2. **Data Types**: `LAST_AUDIT_DATE` must be converted from DATE to STRING for Delta table compatibility
+3. **Null Handling**: New columns will contain NULL values for branches without operational details
+4. **Schema Evolution**: Delta table schema evolution must be enabled for seamless deployment
 
-### Risk Mitigation
-1. **Performance**: Monitor ETL execution time and optimize join strategies if needed
-2. **Data Quality**: Implement data validation checks for new columns
-3. **Rollback Plan**: Maintain ability to revert to previous ETL version if issues arise
-4. **Monitoring**: Enhanced logging for new join operations and data population
+### Technical Considerations
+1. **Memory Usage**: Additional table join may increase memory consumption
+2. **Processing Time**: Enhanced logic may increase overall ETL execution time
+3. **Error Handling**: Existing error handling mechanisms will cover the new table read operations
+4. **Logging**: Enhanced logging messages added for operational details processing
 
 ## References
 
@@ -281,19 +254,20 @@ BRANCH_SUMMARY_REPORT
 - **PCE-1**: PySpark Code enhancement for Databricks
 - **PCE-2**: Extend BRANCH_SUMMARY_REPORT Logic to Integrate New Source Table
 
-### Technical Documentation
-- Source DDL: `Input/Source_DDL.txt`
-- Target DDL: `Input/Target_DDL.txt`
-- Current ETL Implementation: `Input/RegulatoryReportingETL.py`
-- Confluence Documentation: `Input/confluence_content.txt`
+### Source Files
+- **ETL Code**: `Input/RegulatoryReportingETL.py`
+- **Source DDL**: `Input/Source_DDL.txt`
+- **Target DDL**: `Input/Target_DDL.txt`
+- **Confluence Context**: `Input/confluence_content.txt`
+- **Branch Operational DDL**: `Input/branch_operational_details.sql`
 
-### Deployment Notes
-- **Full Reload Required**: `BRANCH_SUMMARY_REPORT` table requires complete refresh due to schema changes
-- **Testing Environment**: Validate changes in development environment before production deployment
-- **Data Validation**: Implement reconciliation checks to ensure data accuracy post-deployment
+### Technical Documentation
+- **Delta Lake Documentation**: For schema evolution and table properties
+- **PySpark SQL Functions**: For join operations and data transformations
+- **Oracle JDBC Driver**: For database connectivity requirements
 
 ---
 
 **Document Version**: 1.0  
 **Last Updated**: Current Date  
-**Review Status**: Pending Technical Review
+**Review Status**: Ready for Technical Review
