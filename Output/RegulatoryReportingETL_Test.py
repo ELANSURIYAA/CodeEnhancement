@@ -1,146 +1,98 @@
-#====================================================================
-# Author: Ascendion AAVA
-# Date: 
-# Description: Python-based test script for RegulatoryReportingETL_Pipeline.py (insert and update scenarios)
-#====================================================================
+====================================================================
+Author: Ascendion AAVA
+Date: 
+Description: Python-based test script for RegulatoryReportingETL_Pipeline.py (insert/update scenarios)
+====================================================================
 
-import sys
-from pyspark.sql import SparkSession, Row
+import logging
+from pyspark.sql import SparkSession
+from RegulatoryReportingETL_Pipeline import create_sample_data, create_branch_summary_report
 from pyspark.sql.types import StructType, StructField, IntegerType, StringType, DoubleType
-from RegulatoryReportingETL_Pipeline import create_branch_summary_report, get_sample_data
+from pyspark.sql.functions import col
+import datetime
 
-# Helper function for pretty printing tables
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-def print_markdown_table(headers, rows):
-    print('| ' + ' | '.join(headers) + ' |')
-    print('| ' + ' | '.join(['-' * len(h) for h in headers]) + ' |')
-    for row in rows:
-        print('| ' + ' | '.join(str(x) for x in row) + ' |')
-
-# Scenario 1: Insert test
-
-def test_insert(spark):
-    # All rows are new (simulate new branches)
-    transaction_data = [
-        (1001, 101, "DEPOSIT", 500.0, "2023-03-01", "Initial Deposit"),
-        (1002, 102, "WITHDRAWAL", 300.0, "2023-03-02", "ATM Withdrawal"),
-    ]
-    transaction_schema = StructType([
-        StructField("TRANSACTION_ID", IntegerType()),
-        StructField("ACCOUNT_ID", IntegerType()),
-        StructField("TRANSACTION_TYPE", StringType()),
-        StructField("AMOUNT", DoubleType()),
-        StructField("TRANSACTION_DATE", StringType()),
-        StructField("DESCRIPTION", StringType()),
-    ])
-    transaction_df = spark.createDataFrame(transaction_data, schema=transaction_schema)
-
-    # Sample branch operational details (all active)
-    bod_data = [
-        (10, "North", "Alice", "2023-05-01", "Y"),
-        (20, "South", "Bob", "2023-06-01", "Y"),
-    ]
-    bod_schema = StructType([
+def run_insert_scenario(spark):
+    """
+    Scenario 1: Insert new rows into branch_summary_report
+    """
+    # Sample branch_op_df: all branches are new
+    branch_op_schema = StructType([
         StructField("BRANCH_ID", IntegerType()),
         StructField("REGION", StringType()),
         StructField("MANAGER_NAME", StringType()),
         StructField("LAST_AUDIT_DATE", StringType()),
-        StructField("IS_ACTIVE", StringType()),
+        StructField("IS_ACTIVE", StringType())
     ])
-    bod_df = spark.createDataFrame(bod_data, schema=bod_schema)
-
-    # Other sources
-    customer_df, account_df, _, branch_df, _ = get_sample_data(spark)
-
-    # Run transformation
-    branch_summary_df = create_branch_summary_report(transaction_df, account_df, branch_df, bod_df)
-    result = branch_summary_df.collect()
-    return branch_summary_df, result
-
-# Scenario 2: Update test
-
-def test_update(spark):
-    # Simulate update: Branch 10 already exists, update REGION and LAST_AUDIT_DATE
-    transaction_data = [
-        (1003, 101, "DEPOSIT", 700.0, "2023-04-01", "Second Deposit"),
-        (1004, 102, "WITHDRAWAL", 100.0, "2023-04-02", "ATM Withdrawal"),
+    branch_op_data = [
+        (101, "North", "John Doe", "2023-05-10", "Y"),
+        (102, "South", "Jane Smith", "2023-05-11", "Y")
     ]
-    transaction_schema = StructType([
-        StructField("TRANSACTION_ID", IntegerType()),
-        StructField("ACCOUNT_ID", IntegerType()),
-        StructField("TRANSACTION_TYPE", StringType()),
-        StructField("AMOUNT", DoubleType()),
-        StructField("TRANSACTION_DATE", StringType()),
-        StructField("DESCRIPTION", StringType()),
-    ])
-    transaction_df = spark.createDataFrame(transaction_data, schema=transaction_schema)
+    branch_op_df = spark.createDataFrame(branch_op_data, branch_op_schema)
 
-    bod_data = [
-        (10, "East", "Carol", "2023-07-01", "Y"),  # Updated REGION and LAST_AUDIT_DATE for branch 10
-        (20, "South", "Bob", "2023-06-01", "N"),
-    ]
-    bod_schema = StructType([
+    # Other sample data
+    customer_df, account_df, transaction_df, branch_df, _ = create_sample_data(spark)
+    # Run ETL logic
+    result_df = create_branch_summary_report(transaction_df, account_df, branch_df, branch_op_df)
+    result = result_df.orderBy("BRANCH_ID").collect()
+    return branch_op_data, [tuple([row.BRANCH_ID, row.BRANCH_NAME, row.REGION, row.LAST_AUDIT_DATE]) for row in result]
+
+def run_update_scenario(spark):
+    """
+    Scenario 2: Update existing rows in branch_summary_report
+    """
+    # Sample branch_op_df: one branch is active, one is inactive
+    branch_op_schema = StructType([
         StructField("BRANCH_ID", IntegerType()),
         StructField("REGION", StringType()),
         StructField("MANAGER_NAME", StringType()),
         StructField("LAST_AUDIT_DATE", StringType()),
-        StructField("IS_ACTIVE", StringType()),
+        StructField("IS_ACTIVE", StringType())
     ])
-    bod_df = spark.createDataFrame(bod_data, schema=bod_schema)
+    branch_op_data = [
+        (101, "North", "John Doe", "2023-05-10", "Y"),
+        (102, "South", "Jane Smith", "2023-05-11", "N")
+    ]
+    branch_op_df = spark.createDataFrame(branch_op_data, branch_op_schema)
 
-    customer_df, account_df, _, branch_df, _ = get_sample_data(spark)
+    customer_df, account_df, transaction_df, branch_df, _ = create_sample_data(spark)
+    result_df = create_branch_summary_report(transaction_df, account_df, branch_df, branch_op_df)
+    result = result_df.orderBy("BRANCH_ID").collect()
+    return branch_op_data, [tuple([row.BRANCH_ID, row.BRANCH_NAME, row.REGION, row.LAST_AUDIT_DATE]) for row in result]
 
-    branch_summary_df = create_branch_summary_report(transaction_df, account_df, branch_df, bod_df)
-    result = branch_summary_df.collect()
-    return branch_summary_df, result
-
-# Run tests and print markdown report
+def print_markdown_report(scenario_name, input_data, output_data, expected_output):
+    print(f"## Test Report\n### {scenario_name}")
+    print("Input:")
+    print("| BRANCH_ID | REGION | MANAGER_NAME | LAST_AUDIT_DATE | IS_ACTIVE |")
+    print("|-----------|--------|--------------|-----------------|-----------|")
+    for row in input_data:
+        print(f"| {row[0]} | {row[1]} | {row[2]} | {row[3]} | {row[4]} |")
+    print("Output:")
+    print("| BRANCH_ID | BRANCH_NAME | REGION | LAST_AUDIT_DATE |")
+    print("|-----------|-------------|--------|-----------------|")
+    for row in output_data:
+        print(f"| {row[0]} | {row[1]} | {row[2] if row[2] is not None else ''} | {row[3] if row[3] is not None else ''} |")
+    status = "PASS" if output_data == expected_output else "FAIL"
+    print(f"Status: {status}\n")
 
 def main():
-    spark = SparkSession.builder.appName("TestBranchSummaryReport").getOrCreate()
-
-    print("## Test Report\n")
-
+    spark = SparkSession.builder.master("local[*]").appName("RegulatoryReportingETL_Test").getOrCreate()
     # Scenario 1: Insert
-    print("### Scenario 1: Insert")
-    branch_summary_df, result = test_insert(spark)
-    input_rows = [
-        (1001, 101, "DEPOSIT", 500.0, "2023-03-01", "Initial Deposit"),
-        (1002, 102, "WITHDRAWAL", 300.0, "2023-03-02", "ATM Withdrawal"),
+    input_data_1, output_data_1 = run_insert_scenario(spark)
+    expected_output_1 = [
+        (101, "Main Branch", "North", "2023-05-10"),
+        (102, "Branch2", "South", "2023-05-11")
     ]
-    print("Input:")
-    print_markdown_table([
-        "TRANSACTION_ID", "ACCOUNT_ID", "TRANSACTION_TYPE", "AMOUNT", "TRANSACTION_DATE", "DESCRIPTION"
-    ], input_rows)
-    print("Output:")
-    out_rows = [tuple(row[x] for x in ["BRANCH_ID", "BRANCH_NAME", "TOTAL_TRANSACTIONS", "TOTAL_AMOUNT", "REGION", "LAST_AUDIT_DATE"]) for row in result]
-    print_markdown_table([
-        "BRANCH_ID", "BRANCH_NAME", "TOTAL_TRANSACTIONS", "TOTAL_AMOUNT", "REGION", "LAST_AUDIT_DATE"
-    ], out_rows)
-    # Simple validation: REGION and LAST_AUDIT_DATE populated for IS_ACTIVE = 'Y'
-    status = "PASS" if all(row[4] is not None and row[5] is not None for row in out_rows) else "FAIL"
-    print(f"Status: {status}\n")
-
+    print_markdown_report("Scenario 1: Insert", input_data_1, output_data_1, expected_output_1)
     # Scenario 2: Update
-    print("### Scenario 2: Update")
-    branch_summary_df, result = test_update(spark)
-    input_rows = [
-        (1003, 101, "DEPOSIT", 700.0, "2023-04-01", "Second Deposit"),
-        (1004, 102, "WITHDRAWAL", 100.0, "2023-04-02", "ATM Withdrawal"),
+    input_data_2, output_data_2 = run_update_scenario(spark)
+    expected_output_2 = [
+        (101, "Main Branch", "North", "2023-05-10"),
+        (102, "Branch2", None, None)
     ]
-    print("Input:")
-    print_markdown_table([
-        "TRANSACTION_ID", "ACCOUNT_ID", "TRANSACTION_TYPE", "AMOUNT", "TRANSACTION_DATE", "DESCRIPTION"
-    ], input_rows)
-    print("Output:")
-    out_rows = [tuple(row[x] for x in ["BRANCH_ID", "BRANCH_NAME", "TOTAL_TRANSACTIONS", "TOTAL_AMOUNT", "REGION", "LAST_AUDIT_DATE"]) for row in result]
-    print_markdown_table([
-        "BRANCH_ID", "BRANCH_NAME", "TOTAL_TRANSACTIONS", "TOTAL_AMOUNT", "REGION", "LAST_AUDIT_DATE"
-    ], out_rows)
-    # Validate: REGION and LAST_AUDIT_DATE for branch 10 updated to 'East' and '2023-07-01'
-    status = "PASS" if any(row[0] == 10 and row[4] == "East" and row[5] == "2023-07-01" for row in out_rows) else "FAIL"
-    print(f"Status: {status}\n")
-
+    print_markdown_report("Scenario 2: Update", input_data_2, output_data_2, expected_output_2)
     spark.stop()
 
 if __name__ == "__main__":
