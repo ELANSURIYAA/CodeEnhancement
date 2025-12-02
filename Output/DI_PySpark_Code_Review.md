@@ -1,94 +1,104 @@
 ==================================================
 Author: Ascendion AAVA
 Date: 
-Description: PySpark ETL Code Review – RegulatoryReportingETL Pipeline Enhancement
+Description: PySpark ETL code review – comparison between legacy and enhanced pipeline for BRANCH_SUMMARY_REPORT and AML_CUSTOMER_TRANSACTIONS
 ==================================================
 
 ## Summary of changes
 
-### Structural Changes
-- **File:** RegulatoryReportingETL_Pipeline.py
-  - **[ADDED]** New source table: `BRANCH_OPERATIONAL_DETAILS` (lines ~50-70, sample data creation and schema definition)
-  - **[MODIFIED]** Function signature for `create_branch_summary_report` now includes `branch_operational_details_df` (line ~97)
-  - **[DEPRECATED]** Old branch summary logic is commented out and annotated (lines ~80-95)
-  - **[ADDED]** Conditional population of `REGION` and `LAST_AUDIT_DATE` in summary report (lines ~107-115)
-  - **[ADDED]** Sample data creation for all tables for self-contained execution (lines ~30-70)
-  - **[MODIFIED]** Spark session creation is now Spark Connect-compatible (line ~18)
+### Structural Deviations
+- **File:** RegulatoryReportingETL.py → RegulatoryReportingETL_Pipeline.py
+- **Added Functions:**
+  - `create_sample_data` (generates sample DataFrames for CUSTOMER, BRANCH, ACCOUNT, TRANSACTION, BRANCH_OPERATIONAL_DETAILS)
+- **Modified Functions:**
+  - `get_spark_session`: Now uses `SparkSession.getActiveSession()` for Spark Connect compatibility; legacy used direct builder.
+  - `create_branch_summary_report`: Now accepts `branch_operational_details_df` and integrates it into aggregation logic.
+- **Removed Functions:**
+  - `read_table` (JDBC ingestion removed; replaced by sample data creation for Databricks compatibility)
+- **Deprecated Logic:**
+  - Legacy aggregation in `create_branch_summary_report` commented out for traceability.
 
-### Semantic Changes
-- **File:** RegulatoryReportingETL_Pipeline.py
-  - **[MODIFIED]** The aggregation logic for `BRANCH_SUMMARY_REPORT` now joins with operational details and only populates `REGION` and `LAST_AUDIT_DATE` if `IS_ACTIVE = 'Y'` (lines ~107-115)
-  - **[ADDED]** Inline documentation and change annotations ([ADDED], [MODIFIED], [DEPRECATED]) for traceability
-  - **[MODIFIED]** Main function now builds DataFrames from sample data for local execution/testing
+### Semantic Deviations
+- **BRANCH_SUMMARY_REPORT Logic:**
+  - Now joins with BRANCH_OPERATIONAL_DETAILS using a left join.
+  - Conditional population of `REGION` and `LAST_AUDIT_DATE` columns based on `IS_ACTIVE` status (`Y` = populate, else NULL).
+  - Handles cases where operational details may be missing (left join behavior).
+- **Data Source:**
+  - Legacy code reads from JDBC Oracle tables; new code is self-contained with sample DataFrames (for testing/Databricks).
+- **Delta Table Write:**
+  - Added `.option("overwriteSchema", "true")` for schema evolution compatibility.
+- **Testability:**
+  - New code is testable in CI/CD and Databricks environments without external DB dependencies.
 
-### Quality Changes
-- **File:** RegulatoryReportingETL_Pipeline.py
-  - **[ADDED]** Inline comments for all new/changed logic
-  - **[ADDED]** Deprecated code is preserved for audit
-  - **[ADDED]** Self-contained execution with sample data enables easier testing and audit
-  - **[MODIFIED]** Improved error handling in Spark session creation
-  - **[MODIFIED]** Delta table write is simulated with `.show()` for demo purposes
+### Quality/Best Practices
+- **Logging:**
+  - Both versions use Python logging; new code has improved traceability and error handling.
+- **Annotations:**
+  - Inline comments `[ADDED]`, `[MODIFIED]`, `[DEPRECATED]` for auditability.
+- **Function Arguments:**
+  - Improved typing and argument clarity in enhanced code.
+- **Sample Data:**
+  - New version enables rapid prototyping and integration testing.
+- **Delta Table:**
+  - Write operations are more robust to schema changes.
 
 ---
 
-## List of Deviations
+## List of Deviations (with file, line, type)
 
 | File | Line(s) | Type | Description |
 |------|---------|------|-------------|
-| RegulatoryReportingETL_Pipeline.py | ~30-70 | Structural | Added sample data and schema for BRANCH_OPERATIONAL_DETAILS |
-| RegulatoryReportingETL_Pipeline.py | ~80-95 | Structural | Deprecated old branch summary logic (commented, [DEPRECATED]) |
-| RegulatoryReportingETL_Pipeline.py | ~97 | Structural | Function signature for create_branch_summary_report includes new DataFrame |
-| RegulatoryReportingETL_Pipeline.py | ~107-115 | Semantic | Added join and conditional population for REGION and LAST_AUDIT_DATE |
-| RegulatoryReportingETL_Pipeline.py | ~18 | Quality | Spark session creation now Spark Connect-compatible |
-| RegulatoryReportingETL_Pipeline.py | throughout | Quality | Inline [ADDED], [MODIFIED], [DEPRECATED] comments for auditability |
+| RegulatoryReportingETL.py | 17-36 | Removed | `read_table` function for JDBC ingestion |
+| RegulatoryReportingETL_Pipeline.py | 17-45 | Added | `create_sample_data` for DataFrame generation |
+| RegulatoryReportingETL.py | 38-52 | Modified | `create_branch_summary_report` (no operational details) |
+| RegulatoryReportingETL_Pipeline.py | 47-77 | Modified | `create_branch_summary_report` (with operational details, conditional logic) |
+| RegulatoryReportingETL_Pipeline.py | 78-93 | Modified | `write_to_delta_table` (schema evolution option added) |
+| RegulatoryReportingETL.py | 54-80 | Modified | `main` (JDBC read logic) |
+| RegulatoryReportingETL_Pipeline.py | 94-111 | Modified | `main` (sample data usage, operational details logic) |
 
 ---
 
 ## Categorization_Changes
 
-### Structural (High Severity)
-- Addition of new source table and schema for operational details
-- Deprecated legacy logic (preserved for audit)
-- Function signature change for summary report logic
-
-### Semantic (High Severity)
-- Logic change: summary report now conditionally populates REGION and LAST_AUDIT_DATE based on IS_ACTIVE
-- Aggregation logic extended to include operational metadata
-
-### Quality (Medium Severity)
-- Improved documentation and traceability
-- Sample data for reproducible local testing
-- Spark Connect compatibility for session creation
+- **Structural:**
+  - Addition of sample data function (Low severity; improves testability)
+  - Removal of JDBC ingestion (Medium severity; restricts production use, but improves dev/test)
+- **Semantic:**
+  - Integration of operational details and conditional column population (High severity; changes report contract)
+  - Left join logic for operational details (Medium severity; affects NULL handling)
+- **Quality:**
+  - Improved error handling/logging (Low severity; best practice)
+  - Inline change annotations (Low severity; improves maintainability)
 
 ---
 
 ## Additional Optimization Suggestions
 
-1. **Parameterize Sample Data Creation**: Move sample data generation outside main ETL script to config or fixture for easier test maintenance.
-2. **Use PySpark DataFrame Validation Utilities**: For production, validate schema and nullability before joins to avoid silent errors.
-3. **Delta Table Writes**: In production, use proper Delta Lake transactional writes and error handling (not just `.show()`).
-4. **Credential Management**: Replace hardcoded JDBC/sample data with secure credential and config management for production.
-5. **Unit/Integration Test Coverage**: Ensure all edge cases (e.g., inactive branches, missing operational details) are tested in CI pipeline.
-6. **Audit Metadata**: Add ETL run metadata (timestamp, source counts) to output for audit traceability.
+1. **Production Compatibility:**
+   - Parameterize data ingestion to allow switching between sample/test and JDBC/production sources.
+   - Enable secure credential management for production DB reads (Databricks secrets, Azure Key Vault).
+2. **Unit Testing:**
+   - Further expand test coverage for edge cases, especially for NULL propagation and schema evolution.
+3. **Data Validation:**
+   - Add explicit data validation steps before writing to Delta tables (e.g., schema checks, row count assertions).
+4. **Performance:**
+   - Consider caching intermediate DataFrames if data volume is large.
+5. **Documentation:**
+   - Add docstrings for all functions, especially new/modified ones.
+6. **Error Handling:**
+   - Ensure all exceptions are logged with stack trace for easier troubleshooting.
 
 ---
 
 ## Cost Estimation and Justification
 
-- **Analysis & Design:** 1 hour (requirements parsing, DDL/tech spec comparison, Jira review)
-- **Code Modification:** 1 hour (ETL code changes, annotation, best practices)
-- **Testing & Validation:** 1 hour (test script creation, scenario validation, markdown reporting)
-- **Documentation:** 0.5 hour (metadata, summary, comments, markdown output)
-- **Total Estimate:** ~3.5 hours
+- **Analysis/Parsing:** 0.5h
+- **Code Refactor & Annotation:** 1.0h
+- **Testing Script Development:** 0.5h
+- **Validation & Markdown Reporting:** 0.25h
+- **Total Effort:** ~2.25h
 
 **Justification:**
-Effort includes full PySpark delta update, audit traceability, best practice coding, and comprehensive scenario-based validation with markdown reporting as required.
+Effort covers full lifecycle: requirements parsing, legacy logic preservation, delta update, annotation, validation, and test reporting. All code changes are traceable, and business requirements are fully met.
 
----
-
-**Files delivered in Output folder:**
-- `RegulatoryReportingETL_Pipeline.py`
-- `RegulatoryReportingETL_Test.py`
-- `DI_PySpark_Code_Review.md` (this review)
-
-All requirements have been met with clear annotations and auditability.
+==================================================
